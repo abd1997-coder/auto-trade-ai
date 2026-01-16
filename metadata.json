@@ -1,0 +1,5 @@
+{
+  "name": "AutoTrade AI Simulator",
+  "description": "A React-based simulation of an adaptive Python trading bot. It fetches real-time data from Binance (ETHUSDT), 'trains' on the last 1000 candles to optimize SMA/RSI/MACD parameters, and simulates live execution with flexible self-correction mechanisms.",
+  "requestFramePermissions": []
+}
