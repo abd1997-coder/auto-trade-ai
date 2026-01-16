@@ -106,7 +106,8 @@ const App: React.FC = () => {
       
     } catch (e) {
       console.error(e);
-      alert("Error loading data.");
+      const errorMessage = e instanceof Error ? e.message : "An unknown error occurred while fetching Binance data.";
+      alert(`⚠️ Error Loading Market Data\n\n${errorMessage}\n\nPlease check your internet connection and try again.`);
     } finally {
       setBotState(prev => ({ ...prev, isTraining: false }));
     }
