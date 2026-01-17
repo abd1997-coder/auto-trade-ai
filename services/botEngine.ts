@@ -15,72 +15,58 @@ export const optimizeStrategy = (history: Candle[]): StrategyParams => {
  * - يدخل الصفقة مباشرة بعد التقاطع دون أي شروط إضافية
  */
 export const checkSignal = (
-  allCandles: CandleWithIndicators[], 
-  currentIndex: number, 
+  allCandles: CandleWithIndicators[],
+  currentIndex: number,
   params: StrategyParams
-): { type: 'BUY' | 'SELL' | 'NONE', reason?: string, signalStrength?: number, entryPrice?: number, stopLoss?: number, takeProfit?: number } => {
-  
-  // نحتاج على الأقل 200 شمعة لحساب EMA 200
+) => {
+
   if (currentIndex < 200) return { type: 'NONE' };
 
   const curr = allCandles[currentIndex];
-  const { ema50, ema200, crossSignal } = curr.indicators;
+  const { ema50, ema200, rsi } = curr.indicators;
+  const prevRsi = allCandles[currentIndex - 1]?.indicators.rsi;
 
-  // التحقق من وجود المؤشرات الأساسية
-  if (!ema50 || !ema200 || !crossSignal) {
+  if (!ema50 || !ema200 || !rsi || prevRsi === undefined) {
     return { type: 'NONE' };
   }
 
-  // 1. فحص تقاطع Golden Cross (إشارة شراء) - دخول مباشر
-  if (crossSignal.type === 'golden' && crossSignal.confirmed) {
-    // حساب نقاط الدخول والخروج
-    const entryPrice = curr.close;
-    
-    // Stop Loss: أسفل EMA 200 أو أسفل أدنى نقطة حديثة
-    const recentLow = Math.min(...allCandles.slice(Math.max(0, currentIndex - 10), currentIndex + 1).map(c => c.low));
-    const stopLoss = entryPrice * 1.017;
-    
-    // Take Profit: تحقيق ربح 2% من سعر الدخول
-    const takeProfit = entryPrice * 1.03;
+  const entryPrice = curr.close;
 
-    const reason = `Golden Cross: EMA 50 > EMA 200 (هدف: +2%)`;
-
+  // ================= BUY =================
+  if (
+    ema50 > ema200 &&             // ترند صاعد
+    curr.close > ema50 &&         // فوق EMA 50
+    prevRsi < 50 && rsi >= 50    // اختراق RSI 50
+  ) {
     return {
       type: 'BUY',
-      reason: reason,
-      signalStrength: crossSignal.strength,
-      entryPrice: entryPrice,
-      stopLoss: stopLoss,
-      takeProfit: takeProfit
+      entryPrice,
+      stopLoss: entryPrice * 0.99,    // 1% SL
+      takeProfit: entryPrice * 1.015, // 1.5% TP
+      reason: 'Trend Buy + RSI Break 50',
+      signalStrength: 7
     };
   }
 
-  // 2. فحص تقاطع Death Cross (إشارة بيع) - دخول مباشر
-  if (crossSignal.type === 'death' && crossSignal.confirmed) {
-    // حساب نقاط الدخول والخروج
-    const entryPrice = curr.close;
-    
-    // Stop Loss: أعلى EMA 200 أو أعلى أعلى نقطة حديثة
-    const recentHigh = Math.max(...allCandles.slice(Math.max(0, currentIndex - 10), currentIndex + 1).map(c => c.high));
-    const stopLoss = Math.max(ema200 * 1.005, recentHigh * 1.002);
-    
-    // Take Profit: تحقيق ربح 2% من سعر الدخول
-    const takeProfit = entryPrice * 0.98;
-
-    const reason = `Death Cross: EMA 50 < EMA 200 (هدف: +2%)`;
-
+  // ================= SELL =================
+  if (
+    ema50 < ema200 &&             // ترند هابط
+    curr.close < ema50 &&         // تحت EMA 50
+    prevRsi > 50 && rsi <= 50    // اختراق RSI 50 للأسفل
+  ) {
     return {
       type: 'SELL',
-      reason: reason,
-      signalStrength: crossSignal.strength,
-      entryPrice: entryPrice,
-      stopLoss: stopLoss,
-      takeProfit: takeProfit
+      entryPrice,
+      stopLoss: entryPrice * 1.01,    // 1% SL
+      takeProfit: entryPrice * 0.985, // 1.5% TP
+      reason: 'Trend Sell + RSI Break 50',
+      signalStrength: 7
     };
   }
 
   return { type: 'NONE' };
 };
+
 
 export const executeTrade = (
   allCandles: CandleWithIndicators[],

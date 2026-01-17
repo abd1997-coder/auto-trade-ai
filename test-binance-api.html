@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Binance API Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1e293b; color: #f1f5f9; }
+        .candle { margin: 10px 0; padding: 10px; background: #334155; border-radius: 5px; }
+        .price { color: #10b981; font-weight: bold; }
+        .error { color: #ef4444; }
+    </style>
+</head>
+<body>
+    <h1>Binance API Test - ETHUSDT 1h</h1>
+    <button onclick="testAPI()">Test API</button>
+    <div id="results"></div>
+
+    <script>
+        async function testAPI() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Loading...</p>';
+            
+            try {
+                const response = await fetch('https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=1h&limit=5');
+                const data = await response.json();
+                
+                if (!Array.isArray(data)) {
+                    resultsDiv.innerHTML = `<p class="error">Error: ${JSON.stringify(data)}</p>`;
+                    return;
+                }
+                
+                let html = '<h2>Last 5 Candles:</h2>';
+                data.forEach((candle, index) => {
+                    const time = new Date(candle[0]);
+                    const open = parseFloat(candle[1]);
+                    const high = parseFloat(candle[2]);
+                    const low = parseFloat(candle[3]);
+                    const close = parseFloat(candle[4]);
+                    const volume = parseFloat(candle[5]);
+                    
+                    html += `
+                        <div class="candle">
+                            <h3>Candle ${index + 1}</h3>
+                            <p><strong>Time (UTC):</strong> ${time.toISOString()}</p>
+                            <p><strong>Time (UTC+2):</strong> ${new Date(time.getTime() + 2*60*60*1000).toISOString()}</p>
+                            <p><strong>Raw Array:</strong> [${candle.slice(0, 6).join(', ')}]</p>
+                            <p><strong>Open:</strong> <span class="price">${open}</span> (raw: "${candle[1]}" type: ${typeof candle[1]})</p>
+                            <p><strong>High:</strong> <span class="price">${high}</span> (raw: "${candle[2]}" type: ${typeof candle[2]})</p>
+                            <p><strong>Low:</strong> <span class="price">${low}</span> (raw: "${candle[3]}" type: ${typeof candle[3]})</p>
+                            <p><strong>Close:</strong> <span class="price">${close}</span> (raw: "${candle[4]}" type: ${typeof candle[4]})</p>
+                            <p><strong>Volume:</strong> ${volume}</p>
+                        </div>
+                    `;
+                });
+                
+                resultsDiv.innerHTML = html;
+            } catch (error) {
+                resultsDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>
