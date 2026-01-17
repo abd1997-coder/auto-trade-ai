@@ -132,6 +132,11 @@ export const executeTrade = (
     return { action: 'NONE' };
   }
 
+  // منع فتح صفقة جديدة إذا كانت هناك صفقة مفتوحة بالفعل
+  if (activeTrade && activeTrade.status === TradeStatus.OPEN) {
+    return { action: 'NONE' };
+  }
+
   // فحص إشارة جديدة للدخول
   const signal = checkSignal(allCandles, currentIndex, params);
 

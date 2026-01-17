@@ -177,6 +177,8 @@ const App: React.FC = () => {
     if (decision.action === 'OPEN' && decision.tradeDetails) {
       const newTrade = decision.tradeDetails as Trade;
       setTrades(prev => [...prev, newTrade]);
+      // تحديث activeTradeRef مباشرة لمنع فتح صفقة ثانية
+      activeTradeRef.current = newTrade;
       setBotState(prev => ({ ...prev, balance: prev.balance - (newTrade.entryPrice * 0.0005) })); 
 
     } else if (decision.action === 'CLOSE') {
@@ -188,6 +190,8 @@ const App: React.FC = () => {
             ? { ...t, ...details } 
             : t
         ));
+        // تحديث activeTradeRef مباشرة بعد إغلاق الصفقة
+        activeTradeRef.current = null;
         const pnl = details.pnl || 0;
         setBotState(prev => ({ ...prev, balance: prev.balance + pnl }));
         
