@@ -1,5 +1,5 @@
 
-import { Candle, CandleWithIndicators, StrategyParams, Trade, TradeStatus, TradeType, OrderBlock } from "../types";
+import { Candle, CandleWithIndicators, StrategyParams, Trade, TradeStatus, TradeType } from "../types";
 
 /**
  * Basic Optimization: Returns a standard risk/reward ratio.
@@ -9,45 +9,75 @@ export const optimizeStrategy = (history: Candle[]): StrategyParams => {
   return { riskRewardRatio: 2.5 };
 };
 
+/**
+ * استراتيجية تقاطع المتوسطات المتحركة - دخول مباشر بعد التقاطع
+ * - يحدد نوع التقاطع (Golden Cross / Death Cross)
+ * - يدخل الصفقة مباشرة بعد التقاطع دون أي شروط إضافية
+ */
 export const checkSignal = (
   allCandles: CandleWithIndicators[], 
   currentIndex: number, 
   params: StrategyParams
-): { type: 'BUY' | 'SELL' | 'NONE', reason?: string, targetBlock?: OrderBlock } => {
+): { type: 'BUY' | 'SELL' | 'NONE', reason?: string, signalStrength?: number, entryPrice?: number, stopLoss?: number, takeProfit?: number } => {
   
+  // نحتاج على الأقل 200 شمعة لحساب EMA 200
   if (currentIndex < 200) return { type: 'NONE' };
 
   const curr = allCandles[currentIndex];
-  const { ema200, rsi, activeBullishBlock, activeBearishBlock } = curr.indicators;
+  const { ema50, ema200, crossSignal } = curr.indicators;
 
-  if (!ema200 || !rsi) return { type: 'NONE' };
-
-  // 1. Trend Filter
-  const isTrendUp = curr.close > ema200;
-  const isTrendDown = curr.close < ema200;
-
-  // 2. SMC Logic
-  const proximityBuffer = curr.close * 0.003; 
-
-  if (isTrendUp && activeBullishBlock) {
-      const nearZone = curr.low <= (activeBullishBlock.top + proximityBuffer);
-      const validHold = curr.close >= activeBullishBlock.bottom; 
-      if (nearZone && validHold) {
-          return { type: 'BUY', reason: 'SMC Demand Retest', targetBlock: activeBullishBlock };
-      }
+  // التحقق من وجود المؤشرات الأساسية
+  if (!ema50 || !ema200 || !crossSignal) {
+    return { type: 'NONE' };
   }
 
-  if (isTrendDown && activeBearishBlock) {
-      const nearZone = curr.high >= (activeBearishBlock.bottom - proximityBuffer);
-      const validHold = curr.close <= activeBearishBlock.top;
-      if (nearZone && validHold) {
-          return { type: 'SELL', reason: 'SMC Supply Retest', targetBlock: activeBearishBlock };
-      }
+  // 1. فحص تقاطع Golden Cross (إشارة شراء) - دخول مباشر
+  if (crossSignal.type === 'golden' && crossSignal.confirmed) {
+    // حساب نقاط الدخول والخروج
+    const entryPrice = curr.close;
+    
+    // Stop Loss: أسفل EMA 200 أو أسفل أدنى نقطة حديثة
+    const recentLow = Math.min(...allCandles.slice(Math.max(0, currentIndex - 10), currentIndex + 1).map(c => c.low));
+    const stopLoss = entryPrice * 1.017;
+    
+    // Take Profit: تحقيق ربح 2% من سعر الدخول
+    const takeProfit = entryPrice * 1.03;
+
+    const reason = `Golden Cross: EMA 50 > EMA 200 (هدف: +2%)`;
+
+    return {
+      type: 'BUY',
+      reason: reason,
+      signalStrength: crossSignal.strength,
+      entryPrice: entryPrice,
+      stopLoss: stopLoss,
+      takeProfit: takeProfit
+    };
   }
 
-  // 3. Fallback Trend Pullback
-  if (isTrendUp && rsi < 45) return { type: 'BUY', reason: 'RSI Pullback' };
-  if (isTrendDown && rsi > 55) return { type: 'SELL', reason: 'RSI Pullback' };
+  // 2. فحص تقاطع Death Cross (إشارة بيع) - دخول مباشر
+  if (crossSignal.type === 'death' && crossSignal.confirmed) {
+    // حساب نقاط الدخول والخروج
+    const entryPrice = curr.close;
+    
+    // Stop Loss: أعلى EMA 200 أو أعلى أعلى نقطة حديثة
+    const recentHigh = Math.max(...allCandles.slice(Math.max(0, currentIndex - 10), currentIndex + 1).map(c => c.high));
+    const stopLoss = Math.max(ema200 * 1.005, recentHigh * 1.002);
+    
+    // Take Profit: تحقيق ربح 2% من سعر الدخول
+    const takeProfit = entryPrice * 0.98;
+
+    const reason = `Death Cross: EMA 50 < EMA 200 (هدف: +2%)`;
+
+    return {
+      type: 'SELL',
+      reason: reason,
+      signalStrength: crossSignal.strength,
+      entryPrice: entryPrice,
+      stopLoss: stopLoss,
+      takeProfit: takeProfit
+    };
+  }
 
   return { type: 'NONE' };
 };
@@ -62,51 +92,99 @@ export const executeTrade = (
   const currentIndex = allCandles.length - 1;
   const currentCandle = allCandles[currentIndex];
   
+  // إغلاق الصفقة المفتوحة إذا تم الوصول إلى Stop Loss أو Take Profit
   if (activeTrade && activeTrade.status === TradeStatus.OPEN) {
     const isBuy = activeTrade.type === TradeType.BUY;
 
+    // فحص Stop Loss
     if ((isBuy && currentCandle.low <= activeTrade.stopLoss) || (!isBuy && currentCandle.high >= activeTrade.stopLoss)) {
          const pnl = isBuy 
             ? (activeTrade.stopLoss - activeTrade.entryPrice) / activeTrade.entryPrice * activeTrade.amount
             : (activeTrade.entryPrice - activeTrade.stopLoss) / activeTrade.entryPrice * activeTrade.amount;
-         return { action: 'CLOSE', tradeDetails: { status: TradeStatus.CLOSED, exitPrice: activeTrade.stopLoss, exitTime: currentCandle.time, pnl, strategyUsed: 'SL Hit' } };
+         return { 
+           action: 'CLOSE', 
+           tradeDetails: { 
+             status: TradeStatus.CLOSED, 
+             exitPrice: activeTrade.stopLoss, 
+             exitTime: currentCandle.time, 
+             pnl, 
+             strategyUsed: 'Stop Loss' 
+           } 
+         };
     }
 
+    // فحص Take Profit
     if ((isBuy && currentCandle.high >= activeTrade.takeProfit) || (!isBuy && currentCandle.low <= activeTrade.takeProfit)) {
         const pnl = isBuy 
             ? (activeTrade.takeProfit - activeTrade.entryPrice) / activeTrade.entryPrice * activeTrade.amount
             : (activeTrade.entryPrice - activeTrade.takeProfit) / activeTrade.entryPrice * activeTrade.amount;
-        return { action: 'CLOSE', tradeDetails: { status: TradeStatus.CLOSED, exitPrice: activeTrade.takeProfit, exitTime: currentCandle.time, pnl, strategyUsed: 'TP Hit' } };
+        return { 
+          action: 'CLOSE', 
+          tradeDetails: { 
+            status: TradeStatus.CLOSED, 
+            exitPrice: activeTrade.takeProfit, 
+            exitTime: currentCandle.time, 
+            pnl, 
+            strategyUsed: 'Take Profit' 
+          } 
+        };
     }
     return { action: 'NONE' };
   }
 
+  // فحص إشارة جديدة للدخول
   const signal = checkSignal(allCandles, currentIndex, params);
 
-  if (signal.type !== 'NONE') {
+  if (signal.type !== 'NONE' && signal.entryPrice && signal.stopLoss && signal.takeProfit) {
       const isBuy = signal.type === 'BUY';
-      const entryPrice = currentCandle.close;
+      const entryPrice = signal.entryPrice;
+      const stopLoss = signal.stopLoss;
+      const takeProfit = signal.takeProfit;
+
+      // حساب حجم الصفقة بناءً على المخاطرة
+      // مخاطرة 1.5% من الرصيد لكل صفقة
+      const riskPerTrade = currentBalance * 0.015;
+      const risk = Math.abs(entryPrice - stopLoss);
       
-      let stopLoss;
-      if (signal.targetBlock) {
-          const padding = (signal.targetBlock.top - signal.targetBlock.bottom) * 0.15;
-          stopLoss = isBuy ? signal.targetBlock.bottom - padding : signal.targetBlock.top + padding;
-      } else {
-          const atr = currentCandle.indicators.atr || (entryPrice * 0.01);
-          stopLoss = isBuy ? entryPrice - (atr * 1.5) : entryPrice + (atr * 1.5);
+      // التأكد من أن المخاطرة منطقية
+      if (risk <= 0 || risk > entryPrice * 0.1) {
+        // إذا كانت المخاطرة غير منطقية، استخدم ATR كبديل
+        const atr = currentCandle.indicators.atr || (entryPrice * 0.01);
+        const adjustedRisk = atr * 1.5;
+        const adjustedStopLoss = isBuy 
+          ? entryPrice - adjustedRisk
+          : entryPrice + adjustedRisk;
+        const adjustedTakeProfit = isBuy
+          ? entryPrice + (adjustedRisk * params.riskRewardRatio)
+          : entryPrice - (adjustedRisk * params.riskRewardRatio);
+        
+        const adjustedRiskAmount = Math.abs(entryPrice - adjustedStopLoss);
+        let positionSize = (riskPerTrade / (adjustedRiskAmount / entryPrice));
+        
+        if (positionSize > currentBalance) positionSize = currentBalance * 0.95;
+        if (positionSize < 10) positionSize = 10;
+
+        return {
+          action: 'OPEN',
+          tradeDetails: {
+            id: Math.random().toString(36).substr(2, 9),
+            type: isBuy ? TradeType.BUY : TradeType.SELL,
+            entryPrice: entryPrice,
+            entryTime: currentCandle.time,
+            amount: positionSize,
+            stopLoss: adjustedStopLoss,
+            initialStopLoss: adjustedStopLoss,
+            takeProfit: adjustedTakeProfit,
+            status: TradeStatus.OPEN,
+            strategyUsed: `${signal.reason || 'EMA Cross Strategy'} (قوة: ${signal.signalStrength || 0}/10)`,
+          }
+        };
       }
 
-      if (isBuy && stopLoss >= entryPrice) stopLoss = entryPrice * 0.995;
-      if (!isBuy && stopLoss <= entryPrice) stopLoss = entryPrice * 1.005;
-
-      const risk = Math.abs(entryPrice - stopLoss);
-      const takeProfit = isBuy 
-        ? entryPrice + (risk * params.riskRewardRatio) 
-        : entryPrice - (risk * params.riskRewardRatio);
-
-      const riskPerTrade = currentBalance * 0.015; // Risk 1.5%
+      // حساب حجم الصفقة بناءً على المخاطرة المحددة
       let positionSize = (riskPerTrade / (risk / entryPrice));
 
+      // حدود حجم الصفقة
       if (positionSize > currentBalance) positionSize = currentBalance * 0.95;
       if (positionSize < 10) positionSize = 10;
 
@@ -122,7 +200,7 @@ export const executeTrade = (
               initialStopLoss: stopLoss,
               takeProfit: takeProfit,
               status: TradeStatus.OPEN,
-              strategyUsed: signal.reason || 'SMC Strategy',
+              strategyUsed: `${signal.reason || 'EMA Cross Strategy'} (قوة: ${signal.signalStrength || 0}/10)`,
           }
       };
   }

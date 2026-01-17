@@ -1,4 +1,4 @@
-import { Candle, StrategyParams, CandleWithIndicators, OrderBlock } from "../types";
+import { Candle, StrategyParams, CandleWithIndicators, MACD, CrossSignal } from "../types";
 
 // Standard EMA
 export const calculateEMA = (data: Candle[], period: number): number[] => {
@@ -76,6 +76,58 @@ export const calculateRSI = (data: Candle[], period: number = 14): number[] => {
   return rsiArray;
 };
 
+// MACD Calculation
+export const calculateMACD = (
+  data: Candle[], 
+  fastPeriod: number = 12, 
+  slowPeriod: number = 26, 
+  signalPeriod: number = 9
+): { macd: number[], signal: number[], histogram: number[] } => {
+  if (data.length < slowPeriod + signalPeriod) {
+    const empty = new Array(data.length).fill(NaN);
+    return { macd: empty, signal: empty, histogram: empty };
+  }
+
+  // Calculate EMA for fast and slow periods
+  const emaFast = calculateEMA(data, fastPeriod);
+  const emaSlow = calculateEMA(data, slowPeriod);
+
+  // Calculate MACD line (fast EMA - slow EMA)
+  const macdLine: number[] = [];
+  for (let i = 0; i < data.length; i++) {
+    if (isNaN(emaFast[i]) || isNaN(emaSlow[i])) {
+      macdLine.push(NaN);
+    } else {
+      macdLine.push(emaFast[i] - emaSlow[i]);
+    }
+  }
+
+  // Calculate Signal line (EMA of MACD line)
+  // We need to convert MACD line to candle-like structure for EMA calculation
+  const macdCandles: Candle[] = macdLine.map((value, i) => ({
+    time: data[i].time,
+    open: value,
+    high: value,
+    low: value,
+    close: value,
+    volume: 0
+  }));
+
+  const signalLine = calculateEMA(macdCandles, signalPeriod);
+
+  // Calculate Histogram (MACD - Signal)
+  const histogram: number[] = [];
+  for (let i = 0; i < data.length; i++) {
+    if (isNaN(macdLine[i]) || isNaN(signalLine[i])) {
+      histogram.push(NaN);
+    } else {
+      histogram.push(macdLine[i] - signalLine[i]);
+    }
+  }
+
+  return { macd: macdLine, signal: signalLine, histogram };
+};
+
 // Standard ATR
 export const calculateATR = (data: Candle[], period: number = 14): number[] => {
   if (data.length <= period) return new Array(data.length).fill(NaN);
@@ -108,99 +160,231 @@ export const calculateATR = (data: Candle[], period: number = 14): number[] => {
   return atr;
 };
 
-// --- INSTITUTIONAL ORDER BLOCK DETECTION ---
-const identifyOrderBlocks = (candles: Candle[], atr: number[]): { bullish: OrderBlock[], bearish: OrderBlock[] } => {
-    const bullishBlocks: OrderBlock[] = [];
-    const bearishBlocks: OrderBlock[] = [];
-    
-    // We iterate through history to find Imbalance/Impulse moves
-    for (let i = 20; i < candles.length - 2; i++) { // Look ahead slightly
-        const currentATR = atr[i];
-        if (!currentATR || isNaN(currentATR)) continue;
+// Determine trend based on EMA 50 and EMA 200
+const determineTrend = (
+  price: number,
+  ema50: number | null,
+  ema200: number | null,
+  macd: MACD | null
+): 'bullish' | 'bearish' | 'neutral' => {
+  if (!ema50 || !ema200) return 'neutral';
 
-        const candle = candles[i];
-        const nextCandle = candles[i+1];
+  // Strong bullish: Price > EMA50 > EMA200 and MACD positive
+  const priceAboveEma50 = price > ema50;
+  const ema50AboveEma200 = ema50 > ema200;
+  const macdBullish = macd && macd.macd !== null && macd.macd > 0;
 
-        if (!candle || !nextCandle) continue;
+  // Strong bearish: Price < EMA50 < EMA200 and MACD negative
+  const priceBelowEma50 = price < ema50;
+  const ema50BelowEma200 = ema50 < ema200;
+  const macdBearish = macd && macd.macd !== null && macd.macd < 0;
 
-        // RELAXED THRESHOLD: 0.8 * ATR instead of 1.5 * ATR to find more zones
-        const impulseThreshold = currentATR * 0.8;
+  if (priceAboveEma50 && ema50AboveEma200 && macdBullish) return 'bullish';
+  if (priceBelowEma50 && ema50BelowEma200 && macdBearish) return 'bearish';
+  
+  // Weak signals
+  if (priceAboveEma50 && ema50AboveEma200) return 'bullish';
+  if (priceBelowEma50 && ema50BelowEma200) return 'bearish';
 
-        // 1. Identify Bullish Order Block (Demand)
-        const isBullishImpulse = 
-            nextCandle.close > nextCandle.open && // Green
-            (nextCandle.close - nextCandle.open) > impulseThreshold && // Decent body
-            nextCandle.close > candle.high; // Break structure locally
-        
-        if (isBullishImpulse) {
-             bullishBlocks.push({
-                 top: candle.high,
-                 bottom: candle.low,
-                 type: 'bullish',
-                 isMitigated: false,
-                 creationTime: candle.time
-             });
-        }
+  return 'neutral';
+};
 
-        // 2. Identify Bearish Order Block (Supply)
-        const isBearishImpulse = 
-            nextCandle.open > nextCandle.close && // Red
-            (nextCandle.open - nextCandle.close) > impulseThreshold && // Decent body
-            nextCandle.close < candle.low; // Break structure locally
+// Determine risk zone based on RSI and MACD divergence
+const determineRiskZone = (
+  rsi: number | null,
+  macd: MACD | null,
+  trend: 'bullish' | 'bearish' | 'neutral'
+): 'low' | 'medium' | 'high' => {
+  if (!rsi || !macd || !macd.macd || !macd.histogram) return 'medium';
 
-        if (isBearishImpulse) {
-            bearishBlocks.push({
-                top: candle.high,
-                bottom: candle.low,
-                type: 'bearish',
-                isMitigated: false,
-                creationTime: candle.time
-            });
-        }
+  // High risk: Overbought/oversold with bearish MACD divergence
+  if (trend === 'bullish' && rsi > 70 && macd.histogram < 0) return 'high';
+  if (trend === 'bearish' && rsi < 30 && macd.histogram > 0) return 'high';
+
+  // Medium risk: Extreme RSI levels
+  if (rsi > 75 || rsi < 25) return 'medium';
+
+  // Low risk: RSI in neutral zone with aligned MACD
+  if (rsi >= 40 && rsi <= 60) {
+    if (trend === 'bullish' && macd.histogram > 0) return 'low';
+    if (trend === 'bearish' && macd.histogram < 0) return 'low';
+  }
+
+  return 'medium';
+};
+
+// Calculate average volume over a period
+const calculateAverageVolume = (candles: Candle[], period: number = 20): number[] => {
+  const avgVolumes: number[] = [];
+  
+  for (let i = 0; i < candles.length; i++) {
+    if (i < period - 1) {
+      avgVolumes.push(NaN);
+      continue;
     }
-    return { bullish: bullishBlocks, bearish: bearishBlocks };
+    
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      sum += candles[j].volume;
+    }
+    avgVolumes.push(sum / period);
+  }
+  
+  return avgVolumes;
+};
+
+// Detect EMA cross (Golden Cross / Death Cross)
+const detectCross = (
+  ema50: number[],
+  ema200: number[],
+  currentIndex: number
+): CrossSignal => {
+  if (currentIndex < 1) {
+    return { type: 'none', strength: 0, confirmed: false };
+  }
+
+  const prevEma50 = ema50[currentIndex - 1];
+  const currEma50 = ema50[currentIndex];
+  const prevEma200 = ema200[currentIndex - 1];
+  const currEma200 = ema200[currentIndex];
+
+  if (!prevEma50 || !currEma50 || !prevEma200 || !currEma200) {
+    return { type: 'none', strength: 0, confirmed: false };
+  }
+
+  // Golden Cross: EMA 50 crosses above EMA 200
+  const goldenCross = prevEma50 <= prevEma200 && currEma50 > currEma200;
+  
+  // Death Cross: EMA 50 crosses below EMA 200
+  const deathCross = prevEma50 >= prevEma200 && currEma50 < currEma200;
+
+  if (goldenCross) {
+    // Calculate cross strength based on angle and distance
+    const distance = currEma50 - currEma200;
+    const prevDistance = Math.abs(prevEma50 - prevEma200);
+    const strength = Math.min(10, Math.max(1, Math.round((distance / (currEma200 * 0.01)) * 5)));
+    
+    return { type: 'golden', strength, confirmed: true };
+  }
+
+  if (deathCross) {
+    // Calculate cross strength
+    const distance = currEma200 - currEma50;
+    const strength = Math.min(10, Math.max(1, Math.round((distance / (currEma200 * 0.01)) * 5)));
+    
+    return { type: 'death', strength, confirmed: true };
+  }
+
+  // Check if we're in a confirmed cross state (not just crossing, but already crossed)
+  if (currEma50 > currEma200) {
+    // Already in golden cross state
+    const distance = currEma50 - currEma200;
+    const strength = Math.min(10, Math.max(1, Math.round((distance / (currEma200 * 0.01)) * 2)));
+    return { type: 'golden', strength, confirmed: true };
+  }
+
+  if (currEma50 < currEma200) {
+    // Already in death cross state
+    const distance = currEma200 - currEma50;
+    const strength = Math.min(10, Math.max(1, Math.round((distance / (currEma200 * 0.01)) * 2)));
+    return { type: 'death', strength, confirmed: true };
+  }
+
+  return { type: 'none', strength: 0, confirmed: false };
+};
+
+// Check if market is sideways (consolidating)
+const isMarketSideways = (
+  candles: Candle[],
+  currentIndex: number,
+  lookback: number = 20
+): boolean => {
+  if (currentIndex < lookback) return false;
+
+  const recentCandles = candles.slice(currentIndex - lookback, currentIndex + 1);
+  const highs = recentCandles.map(c => c.high);
+  const lows = recentCandles.map(c => c.low);
+  
+  const maxHigh = Math.max(...highs);
+  const minLow = Math.min(...lows);
+  const range = maxHigh - minLow;
+  const avgPrice = recentCandles.reduce((sum, c) => sum + c.close, 0) / recentCandles.length;
+  
+  // Market is sideways if the range is less than 3% of average price
+  const sidewaysThreshold = avgPrice * 0.03;
+  
+  return range < sidewaysThreshold;
+};
+
+// Determine volume trend
+const determineVolumeTrend = (
+  candles: Candle[],
+  currentIndex: number,
+  avgVolumes: number[]
+): { trend: 'increasing' | 'decreasing' | 'neutral', ratio: number } => {
+  if (currentIndex < 5 || !avgVolumes[currentIndex]) {
+    return { trend: 'neutral', ratio: 1 };
+  }
+
+  const currentVolume = candles[currentIndex].volume;
+  const avgVolume = avgVolumes[currentIndex];
+  const ratio = currentVolume / avgVolume;
+
+  // Compare with previous volumes
+  if (currentIndex >= 5) {
+    const recentVolumes = candles.slice(currentIndex - 5, currentIndex + 1).map(c => c.volume);
+    const isIncreasing = recentVolumes[recentVolumes.length - 1] > recentVolumes[0] * 1.1;
+    const isDecreasing = recentVolumes[recentVolumes.length - 1] < recentVolumes[0] * 0.9;
+
+    if (isIncreasing && ratio > 1.2) {
+      return { trend: 'increasing', ratio };
+    }
+    if (isDecreasing && ratio < 0.8) {
+      return { trend: 'decreasing', ratio };
+    }
+  }
+
+  return { trend: 'neutral', ratio };
 };
 
 export const enrichCandlesWithIndicators = (candles: Candle[], params: StrategyParams): CandleWithIndicators[] => {
+  const ema50 = calculateEMA(candles, 50);
   const ema200 = calculateEMA(candles, 200);
   const rsi = calculateRSI(candles, 14);
+  const macdData = calculateMACD(candles, 12, 26, 9);
   const atr = calculateATR(candles, 14);
-
-  // Identify all historical Order Blocks
-  const { bullish, bearish } = identifyOrderBlocks(candles, atr);
+  const avgVolumes = calculateAverageVolume(candles, 20);
 
   return candles.map((candle, i) => {
-    // Determine active zones for THIS specific point in time
-    const relevantBullish = bullish.filter(b => b.creationTime < candle.time);
-    const relevantBearish = bearish.filter(b => b.creationTime < candle.time);
+    const macd: MACD | null = 
+      (macdData.macd[i] !== null && macdData.signal[i] !== null && macdData.histogram[i] !== null)
+        ? {
+            macd: macdData.macd[i],
+            signal: macdData.signal[i],
+            histogram: macdData.histogram[i]
+          }
+        : null;
 
-    // Find the closest valid (unbroken) blocks
-    let activeBullishBlock: OrderBlock | null = null;
-    let activeBearishBlock: OrderBlock | null = null;
-
-    // Filter valid Bullish Blocks: Price must be ABOVE them
-    const validBullish = relevantBullish.filter(b => candle.close > b.bottom);
-    if (validBullish.length > 0) {
-        // Sort by time desc (most recent)
-        activeBullishBlock = validBullish.sort((a, b) => b.creationTime - a.creationTime)[0]; 
-    }
-
-    // Filter valid Bearish Blocks: Price must be BELOW them
-    const validBearish = relevantBearish.filter(b => candle.close < b.top);
-    if (validBearish.length > 0) {
-        // Sort by time desc (most recent)
-        activeBearishBlock = validBearish.sort((a, b) => b.creationTime - a.creationTime)[0];
-    }
+    const trend = determineTrend(candle.close, ema50[i], ema200[i], macd);
+    const riskZone = determineRiskZone(rsi[i], macd, trend);
+    const crossSignal = detectCross(ema50, ema200, i);
+    const isSideways = isMarketSideways(candles, i, 20);
+    const volumeAnalysis = determineVolumeTrend(candles, i, avgVolumes);
 
     return {
       ...candle,
       indicators: {
+        ema50: ema50[i] || null,
         ema200: ema200[i] || null,
         rsi: rsi[i] || null,
+        macd: macd,
         atr: atr[i] || null,
-        activeBullishBlock: activeBullishBlock || null,
-        activeBearishBlock: activeBearishBlock || null,
-        marketStructure: (ema200[i] && candle.close > ema200[i]) ? 'bullish' : 'bearish'
+        trend: trend,
+        riskZone: riskZone,
+        crossSignal: crossSignal,
+        volumeTrend: volumeAnalysis.trend,
+        volumeRatio: volumeAnalysis.ratio,
+        isSideways: isSideways
       }
     };
   });

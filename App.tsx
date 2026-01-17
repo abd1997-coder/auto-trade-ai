@@ -330,7 +330,7 @@ const App: React.FC = () => {
                <TrendingUp className="text-emerald-500" size={20} />
                <div>
                  <div className="text-xs text-slate-500">Strategy</div>
-                 <div className="font-bold text-xs md:text-sm">SMC / EMA</div>
+                 <div className="font-bold text-xs md:text-sm">EMA Cross</div>
                </div>
              </div>
              <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg flex items-center gap-3">
@@ -364,9 +364,33 @@ const App: React.FC = () => {
             </div>
             <div className="flex flex-wrap gap-3">
               <IndicatorBadge label="Risk/Reward" value={`${strategy.riskRewardRatio.toFixed(1)}`} color="green" />
-              <IndicatorBadge label="Signal" value="Order Block" color="purple" />
-              <IndicatorBadge label="Filter" value="EMA 200" color="blue" />
-              <IndicatorBadge label="Lot" value="Dynamic" color="orange" />
+              <IndicatorBadge 
+                label="Cross" 
+                value={candles.length > 0 ? (
+                  candles[candles.length - 1].indicators.crossSignal?.type === 'golden' ? 'Golden' :
+                  candles[candles.length - 1].indicators.crossSignal?.type === 'death' ? 'Death' :
+                  'None'
+                ) : 'N/A'} 
+                color={candles.length > 0 && candles[candles.length - 1].indicators.crossSignal?.type === 'golden' ? 'green' : 
+                       candles.length > 0 && candles[candles.length - 1].indicators.crossSignal?.type === 'death' ? 'orange' : 'blue'} 
+              />
+              <IndicatorBadge 
+                label="Signal Strength" 
+                value={candles.length > 0 && candles[candles.length - 1].indicators.crossSignal?.strength 
+                  ? `${candles[candles.length - 1].indicators.crossSignal.strength}/10` 
+                  : 'N/A'} 
+                color="purple" 
+              />
+              <IndicatorBadge 
+                label="RSI" 
+                value={candles.length > 0 ? (candles[candles.length - 1].indicators.rsi?.toFixed(1) || 'N/A') : 'N/A'} 
+                color="orange" 
+              />
+              <IndicatorBadge 
+                label="Volume" 
+                value={candles.length > 0 ? (candles[candles.length - 1].indicators.volumeRatio?.toFixed(2) + 'x' || 'N/A') : 'N/A'} 
+                color="blue" 
+              />
             </div>
           </div>
         </div>

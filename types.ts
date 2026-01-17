@@ -7,22 +7,32 @@ export interface Candle {
   volume: number;
 }
 
-export interface OrderBlock {
-  top: number;
-  bottom: number;
-  type: 'bullish' | 'bearish';
-  isMitigated: boolean;
-  creationTime: number;
+export interface MACD {
+  macd: number | null;
+  signal: number | null;
+  histogram: number | null;
+}
+
+export interface CrossSignal {
+  type: 'golden' | 'death' | 'none';
+  strength: number; // 1-10
+  confirmed: boolean;
 }
 
 export interface Indicators {
+  ema50: number | null;
   ema200: number | null;
   rsi: number | null;
+  macd: MACD | null;
   atr: number | null;
-  // SMC Indicators
-  activeBullishBlock: OrderBlock | null; // Nearest valid demand zone
-  activeBearishBlock: OrderBlock | null; // Nearest valid supply zone
-  marketStructure: 'bullish' | 'bearish' | 'consolidation';
+  // Trend and risk analysis
+  trend: 'bullish' | 'bearish' | 'neutral';
+  riskZone: 'low' | 'medium' | 'high';
+  // Cross analysis
+  crossSignal: CrossSignal;
+  volumeTrend: 'increasing' | 'decreasing' | 'neutral';
+  volumeRatio: number; // Current volume / Average volume
+  isSideways: boolean; // السوق عرضي
 }
 
 export interface CandleWithIndicators extends Candle {
