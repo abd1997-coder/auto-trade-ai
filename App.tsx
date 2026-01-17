@@ -38,12 +38,19 @@ const App: React.FC = () => {
   const [replayCount, setReplayCount] = useState(0);
   const totalReplayCandles = useRef(0);
   
+  // Backtesting Speed Control
+  const [backtestSpeed, setBacktestSpeed] = useState(40); // milliseconds between candles (default: 40ms)
+  const speedRef = useRef(40);
+  
   // Refs for loop management
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const candlesRef = useRef<CandleWithIndicators[]>([]); // Current visible candles
   const futureCandlesRef = useRef<Candle[]>([]); // Hidden real candles for replay
   const strategyRef = useRef<StrategyParams>(DEFAULT_STRATEGY);
   const activeTradeRef = useRef<Trade | null>(null);
+  
+  // Sync speed ref
+  useEffect(() => { speedRef.current = backtestSpeed; }, [backtestSpeed]);
 
   // Sync refs
   useEffect(() => { candlesRef.current = candles; }, [candles]);
@@ -145,9 +152,23 @@ const App: React.FC = () => {
         return;
       }
       setBotState(prev => ({ ...prev, isRunning: true }));
-      intervalRef.current = setInterval(tick, 40); 
+      // استخدام السرعة الحالية من الـ ref
+      const startInterval = () => {
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        intervalRef.current = setInterval(tick, speedRef.current);
+      };
+      startInterval();
     }
   };
+  
+  // تحديث السرعة أثناء التشغيل
+  useEffect(() => {
+    if (botState.isRunning && intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = setInterval(tick, speedRef.current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backtestSpeed, botState.isRunning]);
 
   const tick = () => {
     const currentData = candlesRef.current;
@@ -297,6 +318,34 @@ const App: React.FC = () => {
               ${botState.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
+
+          {/* Speed Control */}
+          <div className="hidden lg:flex flex-col items-end gap-1 min-w-[120px]">
+            <div className="text-xs text-slate-400">سرعة الباك تيست</div>
+            <div className="flex items-center gap-2 w-full">
+              <input
+                type="range"
+                min="1"
+                max="1000"
+                value={backtestSpeed}
+                onChange={(e) => setBacktestSpeed(Number(e.target.value))}
+                disabled={botState.isRunning}
+                className="flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed slider"
+                style={{
+                  background: `linear-gradient(to right, rgb(16, 185, 129) 0%, rgb(16, 185, 129) ${((backtestSpeed - 1) / (1000 - 1)) * 100}%, rgb(51, 65, 85) ${((backtestSpeed - 1) / (1000 - 1)) * 100}%, rgb(51, 65, 85) 100%)`
+                }}
+              />
+              <span className="text-xs font-mono text-slate-300 min-w-[50px] text-right">
+                {backtestSpeed}ms
+              </span>
+            </div>
+            <div className="text-[10px] text-slate-500">
+              {backtestSpeed <= 10 ? 'سريع جداً' : 
+               backtestSpeed <= 50 ? 'سريع' : 
+               backtestSpeed <= 200 ? 'متوسط' : 
+               backtestSpeed <= 500 ? 'بطيء' : 'بطيء جداً'}
+            </div>
+          </div>
           
           <button 
             onClick={toggleBot}
@@ -344,6 +393,36 @@ const App: React.FC = () => {
                  <div className="font-bold text-xs md:text-sm">{candles.length} Candles</div>
                </div>
              </div>
+          </div>
+
+          {/* Speed Control - Mobile/Tablet View */}
+          <div className="lg:hidden bg-slate-900 border border-slate-800 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="text-xs text-slate-500">سرعة الباك تيست</div>
+                <span className="text-xs font-mono text-slate-300 px-2 py-0.5 bg-slate-800 rounded">
+                  {backtestSpeed}ms
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-500">
+                {backtestSpeed <= 10 ? 'سريع جداً' : 
+                 backtestSpeed <= 50 ? 'سريع' : 
+                 backtestSpeed <= 200 ? 'متوسط' : 
+                 backtestSpeed <= 500 ? 'بطيء' : 'بطيء جداً'}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="1"
+              max="1000"
+              value={backtestSpeed}
+              onChange={(e) => setBacktestSpeed(Number(e.target.value))}
+              disabled={botState.isRunning}
+              className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                background: `linear-gradient(to right, rgb(16, 185, 129) 0%, rgb(16, 185, 129) ${((backtestSpeed - 1) / (1000 - 1)) * 100}%, rgb(51, 65, 85) ${((backtestSpeed - 1) / (1000 - 1)) * 100}%, rgb(51, 65, 85) 100%)`
+              }}
+            />
           </div>
 
           <div className="flex-1 bg-slate-950 rounded-lg overflow-hidden min-h-[300px]">
@@ -400,7 +479,12 @@ const App: React.FC = () => {
         </div>
 
         <div className="lg:col-span-1 h-full overflow-hidden">
-          <TradeList trades={trades} />
+          <TradeList 
+            trades={trades} 
+            candles={candles}
+            isLive={botState.isRunning}
+            initialBalance={INITIAL_BALANCE}
+          />
         </div>
       </main>
     </div>

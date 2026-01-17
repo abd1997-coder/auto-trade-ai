@@ -1,16 +1,40 @@
 import React from 'react';
-import { Trade, TradeStatus } from '../types';
+import { Trade, TradeStatus, CandleWithIndicators } from '../types';
 
 interface Props {
   trades: Trade[];
+  candles?: CandleWithIndicators[];
+  isLive?: boolean;
+  initialBalance?: number;
 }
 
-const TradeList: React.FC<Props> = ({ trades }) => {
+const TradeList: React.FC<Props> = ({ trades, candles = [], isLive = false, initialBalance = 10000 }) => {
   // Calculate Statistics
   const closedTrades = trades.filter(t => t.status === TradeStatus.CLOSED);
   const totalClosed = closedTrades.length;
   const wins = closedTrades.filter(t => (t.pnl || 0) > 0).length;
   const losses = closedTrades.filter(t => (t.pnl || 0) <= 0).length;
+
+  // حساب الربح/الخسارة غير المحققة للصفقة المفتوحة
+  const calculateUnrealizedPnL = (trade: Trade): { pnl: number; pnlPercent: number } => {
+    if (trade.status !== TradeStatus.OPEN || !isLive || candles.length === 0) {
+      return { pnl: 0, pnlPercent: 0 };
+    }
+
+    const currentPrice = candles[candles.length - 1].close;
+    const isBuy = trade.type === 'BUY';
+    
+    let unrealizedPnL = 0;
+    if (isBuy) {
+      unrealizedPnL = (currentPrice - trade.entryPrice) / trade.entryPrice * trade.amount;
+    } else {
+      unrealizedPnL = (trade.entryPrice - currentPrice) / trade.entryPrice * trade.amount;
+    }
+    
+    const unrealizedPnLPercent = (unrealizedPnL / initialBalance) * 100;
+    
+    return { pnl: unrealizedPnL, pnlPercent: unrealizedPnLPercent };
+  };
 
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden flex flex-col h-full">
@@ -110,12 +134,39 @@ const TradeList: React.FC<Props> = ({ trades }) => {
               </div>
             )}
              {trade.status === TradeStatus.OPEN && (
-              <div className="flex justify-between items-center mt-1 pt-1 border-t border-slate-700">
-                <span className="text-[10px] text-slate-500">Status</span>
-                <span className="font-bold text-yellow-500 animate-pulse text-[10px]">
-                  ● LIVE
-                </span>
-              </div>
+              <>
+                <div className="flex justify-between items-center mt-1 pt-1 border-t border-slate-700">
+                  <span className="text-[10px] text-slate-500">Status</span>
+                  <span className="font-bold text-yellow-500 animate-pulse text-[10px]">
+                    ● LIVE
+                  </span>
+                </div>
+                {isLive && candles.length > 0 && (() => {
+                  const { pnl, pnlPercent } = calculateUnrealizedPnL(trade);
+                  const currentPrice = candles[candles.length - 1].close;
+                  return (
+                    <>
+                      <div className="flex justify-between items-center mt-1 pt-1 border-t border-yellow-600/30">
+                        <span className="text-[10px] text-slate-500">السعر الحالي</span>
+                        <span className="font-mono text-slate-300 text-[10px]">
+                          {currentPrice.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className={`flex justify-between items-center mt-1 pt-1 border-t ${pnl >= 0 ? 'border-emerald-900/30' : 'border-red-900/30'}`}>
+                        <span className="text-[10px] text-slate-500">PnL غير محقق</span>
+                        <div className="flex flex-col items-end">
+                          <span className={`font-bold font-mono ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)} USDT
+                          </span>
+                          <span className={`text-[9px] font-bold ${pnlPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </>
             )}
             <div className="text-[9px] text-slate-600 mt-0.5 truncate">
                {trade.strategyUsed}
