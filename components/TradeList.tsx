@@ -60,9 +60,6 @@ const TradeList: React.FC<Props> = ({ trades }) => {
               <span className={`font-bold px-1.5 py-0.5 rounded ${trade.type === 'BUY' ? 'bg-emerald-900/80 text-emerald-300' : 'bg-red-900/80 text-red-300'}`}>
                 {trade.type}
               </span>
-              <span className="text-slate-400 font-mono text-[10px]">
-                {new Date(trade.entryTime).toLocaleTimeString()}
-              </span>
             </div>
             
             <div className="flex justify-between mt-2 text-slate-300">
@@ -71,6 +68,38 @@ const TradeList: React.FC<Props> = ({ trades }) => {
                  <span>Exit: <span className="font-mono">{trade.exitPrice.toFixed(2)}</span></span>
               )}
             </div>
+
+            {/* تاريخ وساعة الدخول */}
+            <div className="flex justify-between items-center mt-1 pt-1 border-t border-slate-700">
+              <span className="text-[10px] text-slate-500">تاريخ الدخول</span>
+              <span className="text-slate-400 font-mono text-[10px]">
+                {new Date(trade.entryTime).toLocaleString('en-US', { 
+                  year: 'numeric', 
+                  month: '2-digit', 
+                  day: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                })}
+              </span>
+            </div>
+
+            {/* تاريخ وساعة الخروج (للصفقات المغلقة فقط) */}
+            {trade.status === TradeStatus.CLOSED && trade.exitTime && (
+              <div className="flex justify-between items-center mt-1 pt-1 border-t border-slate-700">
+                <span className="text-[10px] text-slate-500">تاريخ الخروج</span>
+                <span className="text-slate-400 font-mono text-[10px]">
+                  {new Date(trade.exitTime).toLocaleString('en-US', { 
+                    year: 'numeric', 
+                    month: '2-digit', 
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                  })}
+                </span>
+              </div>
+            )}
 
             {trade.status === TradeStatus.CLOSED && trade.pnl !== undefined && (
               <div className={`flex justify-between items-center mt-1 pt-1 border-t ${trade.pnl >= 0 ? 'border-emerald-900/30' : 'border-red-900/30'}`}>
